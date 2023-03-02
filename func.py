@@ -57,15 +57,59 @@ class StringIndexer(BaseEstimator, TransformerMixin):
             {-1: len(s.cat.categories)}
         ))
 
+transformer = Pipeline([
+            ('features', FeatureUnion(n_jobs=1, transformer_list=[
+                # Part 1
+                ('boolean', Pipeline([
+                    ('selector', TypeSelector('bool')),
+                ])),  # booleans close
+                
+                ('numericals', Pipeline([
+                    ('selector', TypeSelector(np.number)),
+                    ('imputer',SimpleImputer()),
+                    ('scaler', StandardScaler()),
+                    
+                ])),  # numericals close
+                
+                # Part 2
+                ('categoricals', Pipeline([
+                    ('selector', TypeSelector('category')),
+                    ('labeler', StringIndexer()),
+                    ('encoder', OneHotEncoder()),
+                ]))  # categoricals close
+            ])),  # features close
+])  # pipeline close
+
+estimators=[
+            ('logistic',LogisticRegression(solver='liblinear',penalty='l2')),
+            ('lasso',LogisticRegression(solver='liblinear',penalty='l1')),
+            ('elasticnet',SGDClassifier(loss='log_loss', penalty='elasticnet')),
+            ('random_forest',RandomForestClassifier(n_estimators=100, random_state=0)),
+            ('deep_nn',MLPClassifier(max_iter=500)),
+            #('ridge',CalibratedClassifierCV(RidgeClassifier())),
+            #('svc', CalibratedClassifierCV(LinearSVC(dual=True, C=10))),
+            #('knn',KNeighborsClassifier(n_neighbors=5,weights='distance',algorithm='auto'))
+]
+
+# Define the hyperparameters for each base learner
+estimator_parameters = {
+    'logistic': {'C': [0.01, 0.1, 1, 10, 100]},
+    'lasso': {'C': [0.001, 0.01, 0.1, 1, 10, 100, 1000]},
+    'elasticnet': {'alpha': [0.0001, 0.001, 0.01],
+                    'l1_ratio': [0.15, 0.5, 0.85],
+                    'max_iter': [1000, 2000, 3000],
+                    'eta0': [0.01, 0.1, 1]},
+    'random_forest': {'n_estimators': [10, 50, 100, 200], 'max_depth': [3, 5, 7, None]},
+    'deep_nn': {'hidden_layer_sizes': [(10,), (50,), (100,), (10, 10), (50, 50), (100, 100)],
+                'activation': ['identity', 'logistic', 'tanh', 'relu'],
+                'solver': ['lbfgs', 'sgd', 'adam'],
+                'alpha': [0.0001, 0.001, 0.01, 0.1],
+                'learning_rate': ['constant', 'invscaling', 'adaptive']}
+}
+
+estimator_names = ['logistic', 'lasso', 'elasticnet', 'random_forest', 'deep_nn']
 
 ####### PRE-PROCESSING
-
-def split_data(data, target):    
-
-    x, eval_data, y, eval_target = train_test_split(data, target, test_size=0.2, train_size=0.8)
-    train_data, val_data, train_target, val_target = train_test_split(x, y, test_size = 0.25,train_size =0.75)
-
-    return train_data, val_data, eval_data, train_target, val_target, eval_target
 
 def load_data(dataset, subtypes):    
 
@@ -88,10 +132,14 @@ def load_data(dataset, subtypes):
     data = data.drop(columns=['PAM50'])
     data = data.astype('float')
 
+    return data, target
+
+def train_test_val_split(data, target):    
+
     x, eval_data, y, eval_target = train_test_split(data, target, test_size=0.2, train_size=0.8)
     train_data, val_data, train_target, val_target = train_test_split(x, y, test_size = 0.25,train_size =0.75)
 
-    return data, target, train_data, val_data, eval_data, train_target, val_target, eval_target
+    return train_data, val_data, eval_data, train_target, val_target, eval_target
 
 def correct_dtypes(target):
     target=target.astype('category')
@@ -110,7 +158,23 @@ def train_models(estimators, data, target, transformer):
         pipes[pipe.steps[1][0]]=pipe
     
     return pipes
-        
+
+# get a stacking ensemble of models
+def trainStackingModel(pipes, final_estimator, data, target, cv):
+
+    # Create the transformer to impute missing values
+    imputer = SimpleImputer(strategy='mean')
+
+    level1 = Pipeline(steps=[('prep', imputer), ('lr', final_estimator)])
+    
+    # define the stacking ensemble
+    model = Pipeline(steps=[('data_prep',transformer),('stacking',StackingClassifier(estimators=pipes, final_estimator=level1, cv=cv))])
+
+    # calculating scores
+    cv = KFold(n_splits=cv)
+    scores = cross_val_score(model, data, target, scoring='accuracy', cv=cv, n_jobs=-1, error_score='raise')
+
+    return model, scores
 ######### SCORING
 
 def prediction_results(pipes, data):
@@ -122,7 +186,6 @@ def prediction_results(pipes, data):
         pred_proba[name] = pipe.predict_proba(data)
     
     return pred, pred_proba
-
 
 def score_estimators(pipes, data, target, estimators, n_splits=5, metrics=['f1','auc','accuracy','logloss']):
 
@@ -173,38 +236,6 @@ def tune_param(model,pipes,param_grid,refit, metrics, data, target, cv=5):
     print('best score: '+str(xgbcv.best_score_))
     print('best params: '+str(xgbcv.best_params_))
     results=pd.DataFrame(xgbcv.cv_results_)
-
-######## PLOTTING
-def plot_learning_curve(estimator, title, X, y, ylim=None, cv=None,
-                        n_jobs=-1, train_sizes=np.linspace(.1, 1.0, 5)):
-
-    """Generate a simple plot of the test and training learning curve"""
-    plt.figure()
-    plt.title(title)
-    if ylim is not None:
-        plt.ylim(*ylim)
-    plt.xlabel("Training examples")
-    plt.ylabel("Score")
-    train_sizes, train_scores, test_scores = learning_curve(
-        estimator, X, y, cv=cv, n_jobs=n_jobs, train_sizes=train_sizes)
-    train_scores_mean = np.mean(train_scores, axis=1)
-    train_scores_std = np.std(train_scores, axis=1)
-    test_scores_mean = np.mean(test_scores, axis=1)
-    test_scores_std = np.std(test_scores, axis=1)
-    plt.grid()
-
-    plt.fill_between(train_sizes, train_scores_mean - train_scores_std,
-                     train_scores_mean + train_scores_std, alpha=0.1,
-                     color="r")
-    plt.fill_between(train_sizes, test_scores_mean - test_scores_std,
-                     test_scores_mean + test_scores_std, alpha=0.1, color="g")
-    plt.plot(train_sizes, train_scores_mean, 'o-', color="r",
-             label="Training score")
-    plt.plot(train_sizes, test_scores_mean, 'o-', color="g",
-             label="Cross-validation score")
-
-    plt.legend(loc="best")
-    return plt
 
 ####### WEIGHT OPTIMIZATION
 
@@ -258,6 +289,43 @@ def find_weights(estimators, members, val_target, predictions):
     weights = normalize(result['x'])
 
     return weights
+
+######## FEATURE SELECTION
+
+
+
+######## PLOTTING
+def plot_learning_curve(estimator, title, X, y, ylim=None, cv=None,
+                        n_jobs=-1, train_sizes=np.linspace(.1, 1.0, 5)):
+
+    """Generate a simple plot of the test and training learning curve"""
+    plt.figure()
+    plt.title(title)
+    if ylim is not None:
+        plt.ylim(*ylim)
+    plt.xlabel("Training examples")
+    plt.ylabel("Score")
+    train_sizes, train_scores, test_scores = learning_curve(
+        estimator, X, y, cv=cv, n_jobs=n_jobs, train_sizes=train_sizes)
+    train_scores_mean = np.mean(train_scores, axis=1)
+    train_scores_std = np.std(train_scores, axis=1)
+    test_scores_mean = np.mean(test_scores, axis=1)
+    test_scores_std = np.std(test_scores, axis=1)
+    plt.grid()
+
+    plt.fill_between(train_sizes, train_scores_mean - train_scores_std,
+                     train_scores_mean + train_scores_std, alpha=0.1,
+                     color="r")
+    plt.fill_between(train_sizes, test_scores_mean - test_scores_std,
+                     test_scores_mean + test_scores_std, alpha=0.1, color="g")
+    plt.plot(train_sizes, train_scores_mean, 'o-', color="r",
+             label="Training score")
+    plt.plot(train_sizes, test_scores_mean, 'o-', color="g",
+             label="Cross-validation score")
+
+    plt.legend(loc="best")
+    return plt
+
 
 def main():
 
