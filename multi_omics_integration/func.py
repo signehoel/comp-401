@@ -26,6 +26,7 @@ from sklearn.ensemble import StackingClassifier
 from itertools import combinations
 from sklearn.feature_selection import SelectFromModel
 from sklearn.linear_model import LogisticRegressionCV
+from imblearn.pipeline import make_pipeline
 
 from sklearn.base import BaseEstimator, TransformerMixin
 import numpy as np
