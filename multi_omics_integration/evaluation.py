@@ -38,7 +38,11 @@ def get_cross_metrics(
         metrics[scorer] = []
         train_metrics[scorer] = []
 
-    skf = StratifiedKFold(n_splits=cv, random_state=0, shuffle=True)
+    if type(cv) == "int":
+        skf = StratifiedKFold(n_splits=cv, random_state=0, shuffle=True)
+    else:
+        skf = cv
+
     scores = cross_validate(
         estimator,
         X,
@@ -214,3 +218,82 @@ def perf(pipes, eval_data, eval_target, results, cols_results):
         )
 
     return results
+
+
+from sklearn.metrics import get_scorer
+from scipy import stats
+
+
+def paired_ttest_5x2cv_custom(
+    estimator1,
+    estimator2,
+    X_1,
+    X_2,
+    y,
+    scoring=None,
+    random_seed=None,
+    fit_params_1=None,
+    fit_params_2=None,
+):
+    variance_sum = 0.0
+    first_diff = None
+    rng = np.random.RandomState(random_seed)
+    scorer = get_scorer(scoring)
+
+    if scoring is None:
+        if estimator1._estimator_type == "classifier":
+            scoring = "balanced_accuracy"
+        elif estimator1._estimator_type == "regressor":
+            scoring = "r2"
+        else:
+            raise AttributeError("Estimator must " "be a Classifier or Regressor.")
+    if isinstance(scoring, str):
+        scorer = get_scorer(scoring)
+    else:
+        scorer = scoring
+
+    variance_sum = 0.0
+    first_diff = None
+
+    def score_diff(X_train_1, X_test_1, X_train_2, X_test_2, y_train, y_test):
+        if fit_params_1 is not None:
+            estimator1.fit(X_train_1, y_train, **fit_params_1)
+        else:
+            estimator1.fit(X_train_1, y_train)
+        if fit_params_2 is not None:
+            estimator2.fit(X_train_2, y_train, **fit_params_2)
+        else:
+            estimator2.fit(X_train_2, y_train)
+
+        est1_score = scorer(estimator1, X_test_1, y_test)
+        est2_score = scorer(estimator2, X_test_2, y_test)
+        score_diff = est1_score - est2_score
+        return score_diff
+
+    for i in range(5):
+        randint = rng.randint(low=0, high=32767)
+        X_train_1, X_test_1, y_train, y_test = train_test_split(
+            X_1, y, test_size=0.5, random_state=randint
+        )
+        X_train_2, X_test_2, y_train, y_test = train_test_split(
+            X_2, y, test_size=0.5, random_state=randint
+        )
+
+        score_diff_1 = score_diff(
+            X_train_1, X_test_1, X_train_2, X_test_2, y_train, y_test
+        )
+        score_diff_2 = score_diff(
+            X_test_1, X_train_1, X_test_2, X_train_2, y_test, y_train
+        )
+        score_mean = (score_diff_1 + score_diff_2) / 2.0
+        score_var = (score_diff_1 - score_mean) ** 2 + (score_diff_2 - score_mean) ** 2
+        variance_sum += score_var
+        if first_diff is None:
+            first_diff = score_diff_1
+
+    numerator = first_diff
+    denominator = np.sqrt(1 / 5.0 * variance_sum)
+    t_stat = numerator / denominator
+
+    pvalue = stats.t.sf(np.abs(t_stat), 5) * 2.0
+    return float(t_stat), float(pvalue)
