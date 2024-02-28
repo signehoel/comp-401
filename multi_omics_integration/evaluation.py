@@ -38,7 +38,7 @@ def get_cross_metrics(
         metrics[scorer] = []
         train_metrics[scorer] = []
 
-    if type(cv) == "int":
+    if isinstance(cv, int):
         skf = StratifiedKFold(n_splits=cv, random_state=0, shuffle=True)
     else:
         skf = cv
