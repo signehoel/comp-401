@@ -111,15 +111,7 @@ class ModalityPipeline(BaseEstimator, TransformerMixin):
 
 
 class MultiOmicsIntegrationClassifier(BaseEstimator, TransformerMixin):
-    def __init__(
-        self,
-        estimator_dict=None,
-        feature_select=None,
-        final_estimator=LogisticRegression(random_state=0, n_jobs=-1),
-        stack_method="auto",
-        cv=5,
-        n_jobs=-1,
-    ):
+    def __init__(self, estimator_dict=None, feature_select=None, final_estimator=LogisticRegression(random_state=0, n_jobs=-1), stack_method='auto', cv=5, n_jobs=-1):
         # calculating scores
         self.estimator_dict = estimator_dict
         self.feature_select = feature_select
@@ -133,27 +125,11 @@ class MultiOmicsIntegrationClassifier(BaseEstimator, TransformerMixin):
         self.cv_ = StratifiedKFold(n_splits=self.cv, random_state=0, shuffle=True)
 
         for dataset, columns in self.column_names_.items():
-            stacking = Pipeline(
-                [
-                    ("column_selector", ColumnSelector(cols=columns)),
-                    ("modality_clf", self.estimator_dict[dataset]),
-                ]
-            )
+            stacking = Pipeline([('column_selector', ColumnSelector(cols=columns)), ('modality_clf', self.estimator_dict[dataset])])
             self.classifiers_.append((dataset, stacking))
 
-        self.final_estimator_ = Pipeline(
-            [
-                ("imputer", SimpleImputer(strategy="median")),
-                ("final_estimator", self.final_estimator),
-            ]
-        )
-        stacking = StackingClassifier(
-            estimators=self.classifiers_,
-            final_estimator=self.final_estimator_,
-            cv=self.cv_,
-            stack_method=self.stack_method,
-            n_jobs=self.n_jobs,
-        )
+        self.final_estimator_ = Pipeline([('imputer', SimpleImputer(strategy='median')), ('final_estimator', self.final_estimator)])
+        stacking = StackingClassifier(estimators=self.classifiers_, final_estimator=self.final_estimator_, cv=self.cv_, stack_method=self.stack_method, n_jobs=self.n_jobs)
 
         return stacking
 

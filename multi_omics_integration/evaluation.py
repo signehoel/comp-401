@@ -9,11 +9,14 @@ from sklearn.metrics import (
     accuracy_score,
     recall_score,
     balanced_accuracy_score,
+    get_scorer
 )
 from sklearn.model_selection import KFold, StratifiedKFold, cross_validate
 import seaborn as sns
 from tqdm import tqdm
-
+from scipy import stats
+from sklearn.model_selection import RepeatedStratifiedKFold
+from scipy.stats import wilcoxon
 
 def recall_multiclass(y_test, y_pred, label):
     return recall_score(y_test, y_pred, average=None)[label]
@@ -219,10 +222,13 @@ def perf(pipes, eval_data, eval_target, results, cols_results):
 
     return results
 
+def wilcoxen_test(name_1, name_2, scores_1, scores_2):
 
-from sklearn.metrics import get_scorer
-from scipy import stats
+    stat, p = wilcoxon(scores_1, scores_2, alternative='greater')
 
+    df = pd.Series({'estimator_1': name_1, 'estimator_2': name_2, 'statistic': stat, 'p': p, 'significant': p <= 0.05})
+
+    return pd.DataFrame(df).T
 
 def paired_ttest_5x2cv_custom(
     estimator1,
