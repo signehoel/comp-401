@@ -83,20 +83,25 @@ def get_cross_metrics(
     return scores, df
 
 
-def get_individual_scores(X, y, estimators, scoring, return_train_score=False):
+def get_individual_scores(X, y, estimators, scoring, cv=5, return_train_score=False):
     base_scores = []
     base_metrics_df = pd.DataFrame()
     base_metrics_df_train = pd.DataFrame()
 
+    if isinstance(cv, int):
+        skf = StratifiedKFold(n_splits=cv, random_state=0, shuffle=True)
+    else:
+        skf = cv
+
     for name, clf in tqdm(estimators):
         if return_train_score:
             score, df, train_df = get_cross_metrics(
-                clf, X, y, name, scoring=scoring, return_train_score=return_train_score
+                clf, X, y, name, scoring=scoring, cv=skf, return_train_score=return_train_score
             )
             base_metrics_df_train = pd.concat([base_metrics_df_train, train_df])
         else:
             score, df = get_cross_metrics(
-                clf, X, y, name, scoring=scoring, return_train_score=return_train_score
+                clf, X, y, name, scoring=scoring, cv=skf, return_train_score=return_train_score
             )
 
         base_metrics_df = pd.concat([base_metrics_df, df])
